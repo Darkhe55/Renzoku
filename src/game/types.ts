@@ -88,9 +88,30 @@ export function edgeCells(edge: number, n: number): { a: number; b: number } | n
   return { a, b: a + n }
 }
 
+/**
+ * 题面/解编码字符集：0-9 表示 0..9，A-G 表示 10..16（兼容旧题：旧数据只含 0-9）。
+ * 16×16 时数字 10..16 依次写作 A..G，与题图一致。
+ */
+export const VALUE_CHARS = '0123456789ABCDEFG'
+
+export function valueChar(value: number): string {
+  const v = value | 0
+  return VALUE_CHARS[v] ?? '?'
+}
+
+export function charValue(ch: string): number {
+  return VALUE_CHARS.indexOf(ch.toUpperCase())
+}
+
+/** 界面显示用：1..9 → 数字，10..16 → A..G（0 = 空格） */
+export function valueLabel(value: number): string {
+  if (value <= 0) return ''
+  return value <= 9 ? String(value) : String.fromCharCode(64 + value - 9)
+}
+
 export function encodeBoard(givens: ArrayLike<number>, relations: ArrayLike<number>): string {
   let out = ''
-  for (let i = 0; i < givens.length; i++) out += String(givens[i]! | 0)
+  for (let i = 0; i < givens.length; i++) out += valueChar(givens[i]!)
   out += '|'
   for (let i = 0; i < relations.length; i++) out += String(relations[i]! | 0)
   return out
@@ -107,7 +128,7 @@ export function decodeBoard(
   if (givensText.length !== n * n) return null
   const givens = new Array<number>(n * n).fill(0)
   for (let i = 0; i < n * n; i++) {
-    const v = givensText.charCodeAt(i) - 48
+    const v = charValue(givensText[i]!)
     if (v < 0 || v > n) return null
     givens[i] = v
   }
@@ -124,7 +145,7 @@ export function decodeBoard(
 
 export function encodeCells(cells: ArrayLike<number>): string {
   let out = ''
-  for (let i = 0; i < cells.length; i++) out += String(cells[i]! | 0)
+  for (let i = 0; i < cells.length; i++) out += valueChar(cells[i]!)
   return out
 }
 
@@ -132,7 +153,7 @@ export function decodeCells(text: string, expected: number, n: number): number[]
   if (typeof text !== 'string' || text.length !== expected) return null
   const out = new Array<number>(expected)
   for (let i = 0; i < expected; i++) {
-    const v = text.charCodeAt(i) - 48
+    const v = charValue(text[i]!)
     if (v < 0 || v > n) return null
     out[i] = v
   }

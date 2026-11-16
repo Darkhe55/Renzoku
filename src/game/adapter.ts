@@ -25,7 +25,7 @@ import {
   valueAt,
 } from './state'
 import { statusBits, validate } from './validate'
-import { decodeBoard, edgeCount, encodeBoard, type FutoPuzzle } from './types'
+import { decodeBoard, edgeCount, encodeBoard, valueLabel, type FutoPuzzle } from './types'
 
 const meta = {
   title: '连续',
@@ -36,22 +36,23 @@ const meta = {
   customIdPrefix: 'renzoku-custom-',
   customMinW: 4,
   customMinH: 4,
-  customMaxW: 8,
-  customMaxH: 8,
+  customMaxW: 16,
+  customMaxH: 16,
   targetKind: 'cell' as const,
 }
 
-const VALUE_CYCLE: Array<number | null> = [null, 1, 2, 3, 4, 5, 6, 7, 8]
+/** 1..16 的点击循环（10..16 显示为 A..G，与题图一致） */
+const VALUE_CYCLE: Array<number | null> = [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 
 const custom: CustomSupport = {
   mode: 'none',
   valueCycle: VALUE_CYCLE,
   keyForDigit: (digit) => {
     if (digit === 0) return null
-    if (digit >= 1 && digit <= 8) return digit
+    if (digit >= 1 && digit <= 9) return digit
     return undefined
   },
-  cellLabel: (v) => (v == null ? '' : String(v)),
+  cellLabel: (v) => (v == null ? '' : valueLabel(v)),
   cellClass: (v) => (v == null ? '' : `r${v}`),
   hint: '本游戏暂不支持自定义题板。',
   makePuzzle: (w, h, _grid, existingId) => ({

@@ -160,127 +160,90 @@ const analysis = await page.evaluate(
       return 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]
     }
 
-    // 1) 页面底色（四角中位数）与题板包围盒
-    const cornerVals = []
-    for (const [cx, cy] of [
-      [5, 5],
-      [W - 6, 5],
-      [5, H - 6],
-      [W - 6, H - 6],
-    ]) {
-      for (let dy = -3; dy <= 3; dy++)
-        for (let dx = -3; dx <= 3; dx++) {
-          const x = Math.max(0, Math.min(W - 1, cx + dx))
-          const y = Math.max(0, Math.min(H - 1, cy + dy))
-          cornerVals.push(grayAt(x, y))
-        }
+    // 1) 深色格线投影：每个格子有独立黑色边框，用「整列/整行深色像素数」找格线中心
+    const dark = new Uint8Array(W * H)
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) dark[y * W + x] = grayAt(x, y) < 128 ? 1 : 0
     }
-    cornerVals.sort((a, b) => a - b)
-    const pageBg = cornerVals[Math.floor(cornerVals.length / 2)]
-    let bx0 = crop ? crop[0] : W
-    let by0 = crop ? crop[1] : H
-    let bx1 = crop ? crop[0] + crop[2] - 1 : -1
-    let by1 = crop ? crop[1] + crop[3] - 1 : -1
-    if (!crop) {
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          if (Math.abs(grayAt(x, y) - pageBg) <= 8) continue
-          if (x < bx0) bx0 = x
-          if (x > bx1) bx1 = x
-          if (y < by0) by0 = y
-          if (y > by1) by1 = y
-        }
-      }
-    }
-    if (bx1 < bx0 || by1 < by0) throw new Error('图片里没有找到题板')
-    const bw = bx1 - bx0 + 1
-    const bh = by1 - by0 + 1
-
-    // 2) 格子底色众数 + 亮像素投影
-    const hist = new Int32Array(256)
-    for (let y = by0; y <= by1; y++) {
-      for (let x = bx0; x <= bx1; x++) hist[Math.round(grayAt(x, y)) | 0]++
-    }
-    let mode = 0
-    let modeCount = -1
-    for (let v = 0; v < 256; v++) {
-      if (hist[v] > modeCount) {
-        modeCount = hist[v]
-        mode = v
-      }
-    }
-    const isBright = new Uint8Array(bw * bh)
-    for (let y = 0; y < bh; y++) {
-      for (let x = 0; x < bw; x++) {
-        isBright[y * bw + x] = grayAt(bx0 + x, by0 + y) >= mode - 8 ? 1 : 0
-      }
-    }
-    const colCount = new Int32Array(bw)
-    const rowCount = new Int32Array(bh)
-    for (let y = 0; y < bh; y++) {
-      for (let x = 0; x < bw; x++) {
-        if (!isBright[y * bw + x]) continue
+    const colCount = new Int32Array(W)
+    const rowCount = new Int32Array(H)
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!dark[y * W + x]) continue
         colCount[x]++
         rowCount[y]++
       }
     }
-    const medianOf = (arr) => {
-      const s = Array.from(arr).sort((a, b) => a - b)
-      return s[Math.floor(s.length / 2)]
-    }
-    /** 连续棋盘：格子是亮色圆角块、格间是深色缝隙（或格线），用「亮块游程」定位每个格子。
-     *  亮度投影里的连续高值段 = 一列/一行格子，两条亮块之间的中点 = 格缝中心（黑点也画在这里）。 */
-    const axisOf = (profile) => {
-      const med = medianOf(profile)
-      let maxp = 0
-      for (const v of profile) if (v > maxp) maxp = v
-      const thr = Math.max(3, Math.min(med * 0.35, maxp * 0.5))
-      const runs = []
-      let start = -1
-      for (let i = 0; i < profile.length; i++) {
-        const on = profile[i] > thr
-        if (on && start < 0) start = i
-        if (!on && start >= 0) {
-          runs.push({ start, end: i - 1 })
-          start = -1
+    /** 统计阈值线：连续超过 min 的区间 → 线段中心 */
+    const lineCenters = (counts, min) => {
+      const out = []
+      let st = -1
+      for (let i = 0; i <= counts.length; i++) {
+        const on = i < counts.length && counts[i] >= min
+        if (on && st < 0) st = i
+        if (!on && st >= 0) {
+          out.push((st + i - 1) / 2)
+          st = -1
         }
       }
-      if (start >= 0) runs.push({ start, end: profile.length - 1 })
-      if (runs.length < 2) throw new Error('没有检测到足够的格子')
-      const widths = runs.map((r) => r.end - r.start + 1)
-      const medW = medianOf(widths)
-      const kept = runs.filter((r) => r.end - r.start + 1 >= medW * 0.35)
-      if (kept.length < 2) throw new Error('没有检测到足够的格子')
-      const gaps = []
-      for (let k = 0; k + 1 < kept.length; k++) gaps.push(kept[k + 1].start - kept[k].end - 1)
-      const gap = gaps.length ? medianOf(gaps) : Math.max(1, Math.round(medW * 0.04))
-      const half = Math.max(0.5, gap / 2)
-      const lines = [kept[0].start - half]
-      for (let k = 0; k + 1 < kept.length; k++) {
-        lines.push((kept[k].end + kept[k + 1].start + 1) / 2)
+      return out
+    }
+    let lineX = lineCenters(colCount, H * 0.25)
+    let lineY = lineCenters(rowCount, W * 0.25)
+    const dedupe = (vals, tol = 3) => {
+      const out = []
+      for (const v of vals) {
+        if (out.length && v - out[out.length - 1] <= tol) out[out.length - 1] = (out[out.length - 1] + v) / 2
+        else out.push(v)
       }
-      lines.push(kept[kept.length - 1].end + 1 + half)
-      const step = (lines[lines.length - 1] - lines[0]) / (lines.length - 1)
-      return { lines, step, count: kept.length, candidates: runs.length }
+      return out
     }
-    const xAxis = axisOf(colCount)
-    const yAxis = axisOf(rowCount)
-    // 投影坐标是「题板包围盒内」的局部坐标，转成图片绝对坐标
-    let xs = xAxis.lines.map((v) => v + bx0)
-    let ys = yAxis.lines.map((v) => v + by0)
-    let n = xs.length - 1
-    let rows = ys.length - 1
-    if (sizeOpt >= 2 && (n !== sizeOpt || rows !== sizeOpt)) {
-      throw new Error(`网格不匹配：识别到 ${n}×${rows}，--size ${sizeOpt}`)
+    lineX = dedupe(lineX.filter((v) => v > 1 && v < W - 2))
+    lineY = dedupe(lineY.filter((v) => v > 1 && v < H - 2))
+    if (crop) {
+      lineX = lineX.filter((v) => v >= crop[0] && v <= crop[0] + crop[2])
+      lineY = lineY.filter((v) => v >= crop[1] && v <= crop[1] + crop[3])
     }
-    if (rows !== n) throw new Error(`非正方形网格 ${n}×${rows}，本项目只支持 n×n`)
-    if (n < 2) throw new Error(`识别到的网格太小：${n}×${n}`)
-    const cell = (xs[n] - xs[0]) / n
 
-    // 3) 数字模板（多字体多字重，归一化 24×24）
+    /** 把格线两两配成「格子盒」：相邻两条线间距大的是格宽，小的是格缝 */
+    const boxesOf = (lines) => {
+      if (lines.length < 3) return []
+      const gaps = []
+      for (let i = 0; i + 1 < lines.length; i++) gaps.push(lines[i + 1] - lines[i])
+      const sorted = [...gaps].sort((a, b) => a - b)
+      const med = sorted[Math.floor(sorted.length / 2)]
+      const thresh = med * 0.7
+      const big = []
+      for (let i = 0; i < gaps.length; i++) if (gaps[i] >= thresh) big.push(i)
+      if (big.length < 2) return []
+      const boxes = []
+      for (let k = 0; k < big.length; k++) {
+        const i = big[k]
+        boxes.push({ a: lines[i], b: lines[i + 1], size: gaps[i] })
+      }
+      // 合并明显不规整的（尺寸偏差过大的丢弃）
+      const sizes = boxes.map((b) => b.size)
+      const ms = sizes.sort((a, b) => a - b)[Math.floor(sizes.length / 2)]
+      return boxes.filter((b) => Math.abs(b.size - ms) <= ms * 0.25)
+    }
+    const boxesX = boxesOf(lineX)
+    const boxesY = boxesOf(lineY)
+    let n = Math.min(boxesX.length, boxesY.length)
+    if (sizeOpt >= 2 && n !== sizeOpt) {
+      throw new Error(`网格不匹配：识别到 ${n}×${n}，--size ${sizeOpt}`)
+    }
+    if (n < 2) throw new Error('没有检测到足够的格子（格线投影配对失败，可用 --size 手动指定）')
+    const bx = boxesX.slice(0, n)
+    const by = boxesY.slice(0, n)
+    const cellW = bx.reduce((a, b) => a + b.size, 0) / n
+    const cellH = by.reduce((a, b) => a + b.size, 0) / n
+    const cxOf = (c) => (bx[c].a + bx[c].b) / 2
+    const cyOf = (r) => (by[r].a + by[r].b) / 2
+
+    // 2) 每格中心裁切 + 自适应二值化 + 多字体模板匹配（0-9 与 A-G）
     const NS = 24
     const SRC = 40
-    const DIGITS = '123456789'.slice(0, n)
+    const CHARS = '123456789ABCDEFG'.slice(0, n)
     const normBit = (raw, T) => {
       let x0 = SRC
       let y0 = SRC
@@ -310,32 +273,6 @@ const analysis = await page.evaluate(
       }
       return { m: out, ink, bw: bwid, bh: bhei }
     }
-    const holesOf = (m) => {
-      const seen = new Uint8Array(NS * NS)
-      let holes = 0
-      for (let j = 0; j < NS; j++) {
-        for (let i = 0; i < NS; i++) {
-          if (m[j * NS + i] || seen[j * NS + i]) continue
-          let touches = false
-          const st = [[i, j]]
-          seen[j * NS + i] = 1
-          while (st.length) {
-            const [x, y] = st.pop()
-            if (x === 0 || y === 0 || x === NS - 1 || y === NS - 1) touches = true
-            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-              const nx = x + dx
-              const ny = y + dy
-              if (nx < 0 || ny < 0 || nx >= NS || ny >= NS) continue
-              if (seen[ny * NS + nx] || m[ny * NS + nx]) continue
-              seen[ny * NS + nx] = 1
-              st.push([nx, ny])
-            }
-          }
-          if (!touches) holes++
-        }
-      }
-      return holes
-    }
     const tc = document.createElement('canvas')
     tc.width = 120
     tc.height = 120
@@ -356,9 +293,9 @@ const analysis = await page.evaluate(
       '700 84px "Trebuchet MS"',
     ]
     const templates = {}
-    for (const ch of DIGITS) templates[ch] = []
+    for (const ch of CHARS) templates[ch] = []
     for (const font of FONTS) {
-      for (const ch of DIGITS) {
+      for (const ch of CHARS) {
         tg.fillStyle = '#fff'
         tg.fillRect(0, 0, 120, 120)
         tg.fillStyle = '#000'
@@ -376,7 +313,7 @@ const analysis = await page.evaluate(
           }
         }
         const gl = normBit(raw, 128)
-        if (gl) templates[ch].push({ m: gl.m, holes: holesOf(gl.m) })
+        if (gl) templates[ch].push({ m: gl.m })
       }
     }
     const simShift = (a, b) => {
@@ -410,38 +347,33 @@ const analysis = await page.evaluate(
       return vals[Math.floor(vals.length / 2)]
     }
 
-    // 4) 每格数字 + 中间黑点
     const cells = []
     const warnings = []
-    const inset = cell * 0.2
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
-        const x0 = xs[c] + inset
-        const x1 = xs[c + 1] - inset
-        const y0 = ys[r] + inset
-        const y1 = ys[r + 1] - inset
-        // 四角底色（给定格的圆环/数字在格心，四角干净）
-        const cornerHalf = Math.max(1, Math.round(cell * 0.05))
-        const cpad = 0.2
+        const left = bx[c].a
+        const right = bx[c].b
+        const top = by[r].a
+        const bottom = by[r].b
+        const x0 = left + (right - left) * 0.18
+        const x1 = right - (right - left) * 0.18
+        const y0 = top + (bottom - top) * 0.18
+        const y1 = bottom - (bottom - top) * 0.18
+        const cornerHalf = Math.max(1, Math.round(cellW * 0.05))
         const corners = [
-          patchMedian(x0 + (x1 - x0) * cpad, y0 + (y1 - y0) * cpad, cornerHalf),
-          patchMedian(x1 - (x1 - x0) * cpad, y0 + (y1 - y0) * cpad, cornerHalf),
-          patchMedian(x0 + (x1 - x0) * cpad, y1 - (y1 - y0) * cpad, cornerHalf),
-          patchMedian(x1 - (x1 - x0) * cpad, y1 - (y1 - y0) * cpad, cornerHalf),
+          patchMedian(x0 + (x1 - x0) * 0.12, y0 + (y1 - y0) * 0.12, cornerHalf),
+          patchMedian(x1 - (x1 - x0) * 0.12, y0 + (y1 - y0) * 0.12, cornerHalf),
+          patchMedian(x0 + (x1 - x0) * 0.12, y1 - (y1 - y0) * 0.12, cornerHalf),
+          patchMedian(x1 - (x1 - x0) * 0.12, y1 - (y1 - y0) * 0.12, cornerHalf),
         ]
         corners.sort((a, b) => a - b)
         const bg = corners[Math.floor(corners.length / 2)]
-        // 中心 62% 裁切：连续给定格的圆环（浅色描边）用阈值排除
-        const mx = x0 + (x1 - x0) * 0.19
-        const my = y0 + (y1 - y0) * 0.19
-        const mw = (x1 - x0) * 0.62
-        const mh = (y1 - y0) * 0.62
         const raw = new Float32Array(SRC * SRC)
         for (let j = 0; j < SRC; j++) {
           for (let i = 0; i < SRC; i++) {
             raw[j * SRC + i] = grayAt(
-              Math.max(0, Math.min(W - 1, Math.round(mx + (mw * i) / (SRC - 1)))),
-              Math.max(0, Math.min(H - 1, Math.round(my + (mh * j) / (SRC - 1)))),
+              Math.max(0, Math.min(W - 1, Math.round(x0 + ((x1 - x0) * i) / (SRC - 1)))),
+              Math.max(0, Math.min(H - 1, Math.round(y0 + ((y1 - y0) * j) / (SRC - 1)))),
             )
           }
         }
@@ -451,33 +383,29 @@ const analysis = await page.evaluate(
         let score = 0
         let margin = 0
         if (gl && gl.ink >= 8 && gl.bw <= SRC * 0.95 && gl.bh <= SRC * 0.95 && gl.ink <= SRC * SRC * 0.65) {
-          const holes = holesOf(gl.m)
           const ranked = []
-          for (const d of DIGITS) {
+          for (const d of CHARS) {
             let best = 0
             for (const t of templates[d]) {
-              let s = simShift(gl.m, t.m)
-              if (t.holes === holes) s += 0.1
-              else if (Math.abs(t.holes - holes) >= 2) s -= 0.12
+              const s = simShift(gl.m, t.m)
               if (s > best) best = s
             }
             ranked.push({ d, score: Number(best.toFixed(4)) })
           }
           ranked.sort((a, b) => b.score - a.score)
-          value = Number(ranked[0].d)
+          value = CHARS.indexOf(ranked[0].d) + 1
           score = ranked[0].score
           margin = ranked[0].score - (ranked[1]?.score ?? 0)
-          if (score < 0.45) warnings.push(`格 (${c},${r}) 数字置信度低：${value} ${score.toFixed(2)}（可 --map 修正）`)
+          if (score < 0.45) warnings.push(`格 (${c},${r}) 数字置信度低：${ranked[0].d} ${score.toFixed(2)}（可 --map 修正）`)
         }
         cells.push({ c, r, value, score, margin, bg, ink: gl ? gl.ink : 0, bw: gl ? gl.bw : 0, bh: gl ? gl.bh : 0 })
       }
     }
-    const valueAt = (c, r) => cells[r * n + c].value
-    // 黑点：内部边中点。用「中心小方块里的深色占比」区分黑点与穿过该点的格线：
-    // 黑点直径约 0.18 格，中心 0.14 格小方块几乎被填满；格线只占一条窄带。
+
+    // 3) 黑点：相邻两格之间格缝的中点；格缝足够宽，窗口内只有黑点没有格线
     const dotAt = (cx, cy) => {
-      const half = Math.max(2, Math.round(cell * 0.07))
-      let dark = 0
+      const half = Math.max(2, Math.round(Math.min(cellW, cellH) * 0.1))
+      let darkCount = 0
       let total = 0
       for (let dy = -half; dy <= half; dy++) {
         for (let dx = -half; dx <= half; dx++) {
@@ -485,40 +413,45 @@ const analysis = await page.evaluate(
           const y = Math.round(cy + dy)
           if (x < 0 || y < 0 || x >= W || y >= H) continue
           total++
-          if (grayAt(x, y) < pageBg - 100) dark++
+          if (dark[y * W + x]) darkCount++
         }
       }
-      return total ? dark / total : 0
+      return total ? darkCount / total : 0
     }
-    const relH = new Array(n * (n - 1)).fill(0) // 水平边：y*(n-1)+x
-    const relV = new Array((n - 1) * n).fill(0) // 垂直边：y*n+x
+    const relH = new Array(n * (n - 1)).fill(0)
+    const relV = new Array((n - 1) * n).fill(0)
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n - 1; c++) {
-        const cx = xs[c + 1]
-        const cy = (ys[r] + ys[r + 1]) / 2
-        const ratio = dotAt(cx, cy)
-        relH[r * (n - 1) + c] = ratio >= 0.5 ? 1 : 0
-        if (ratio > 0.2 && ratio < 0.5) warnings.push(`黑点置信度低：水平 (${c},${r}) 占比 ${ratio.toFixed(3)}`)
+        const x = (bx[c].b + bx[c + 1].a) / 2
+        const y = cyOf(r)
+        const ratio = dotAt(x, y)
+        relH[r * (n - 1) + c] = ratio >= 0.45 ? 1 : 0
+        if (ratio > 0.18 && ratio < 0.45) warnings.push(`黑点置信度低：水平 (${c},${r}) 占比 ${ratio.toFixed(3)}`)
       }
     }
     for (let r = 0; r < n - 1; r++) {
       for (let c = 0; c < n; c++) {
-        const cx = (xs[c] + xs[c + 1]) / 2
-        const cy = ys[r + 1]
-        const ratio = dotAt(cx, cy)
-        relV[r * n + c] = ratio >= 0.5 ? 1 : 0
-        if (ratio > 0.2 && ratio < 0.5) warnings.push(`黑点置信度低：垂直 (${c},${r}) 占比 ${ratio.toFixed(3)}`)
+        const x = cxOf(c)
+        const y = (by[r].b + by[r + 1].a) / 2
+        const ratio = dotAt(x, y)
+        relV[r * n + c] = ratio >= 0.45 ? 1 : 0
+        if (ratio > 0.18 && ratio < 0.45) warnings.push(`黑点置信度低：垂直 (${c},${r}) 占比 ${ratio.toFixed(3)}`)
       }
     }
     return {
       imageW: W,
       imageH: H,
-      board: { x: bx0, y: by0, w: bw, h: bh },
+      board: {
+        x: Math.round(bx[0].a),
+        y: Math.round(by[0].a),
+        w: Math.round(bx[n - 1].b - bx[0].a),
+        h: Math.round(by[n - 1].b - by[0].a),
+      },
       n,
-      cell: Number(cell.toFixed(2)),
-      mode,
-      xs: xs.map((v) => Number(v.toFixed(1))),
-      ys: ys.map((v) => Number(v.toFixed(1))),
+      cell: Number(((cellW + cellH) / 2).toFixed(2)),
+      mode: 0,
+      xs: bx.map((b) => Number(((b.a + b.b) / 2).toFixed(1))),
+      ys: by.map((b) => Number(((b.a + b.b) / 2).toFixed(1))),
       cells,
       relH,
       relV,

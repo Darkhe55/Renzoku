@@ -2,30 +2,36 @@
  * 不等式题库审计
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { decodeBoard, decodeCells } from '../src/game/types.ts'
 import { isValidSolution, solveByRules } from '../src/game/rules.ts'
 import { countSolutions } from '../src/game/solver.ts'
 
-const DATA_FILE = path.resolve('src/game/puzzles-data.ts')
-const text = readFileSync(DATA_FILE, 'utf8')
+/** 内置题库 + 图片导入题库（imported-puzzles.ts，npm run gen 不会覆盖） */
+const DATA_FILES = [path.resolve('src/game/puzzles-data.ts'), path.resolve('src/game/imported-puzzles.ts')]
+
+const ENTRY_RE =
+  /\{\s*id:\s*"([^"]+)",\s*name:\s*"([^"]+)",\s*width:\s*(\d+),\s*height:\s*(\d+),\s*difficulty:\s*'([^']+)',\s*series:\s*"([^"]+)",\s*board:\s*"([^"]*)",\s*solution:\s*"([^"]*)"\s*\}/g
 
 const entries = []
-const re =
-  /\{\s*id:\s*"([^"]+)",\s*name:\s*"([^"]+)",\s*width:\s*(\d+),\s*height:\s*(\d+),\s*difficulty:\s*'([^']+)',\s*series:\s*"([^"]+)",\s*board:\s*"([^"]*)",\s*solution:\s*"([^"]*)"\s*\}/g
-let m
-while ((m = re.exec(text)) !== null) {
-  entries.push({
-    id: m[1],
-    name: m[2],
-    width: Number(m[3]),
-    height: Number(m[4]),
-    difficulty: m[5],
-    series: m[6],
-    board: m[7],
-    solution: m[8],
-  })
+for (const file of DATA_FILES) {
+  if (!existsSync(file)) continue
+  const text = readFileSync(file, 'utf8')
+  ENTRY_RE.lastIndex = 0
+  let m
+  while ((m = ENTRY_RE.exec(text)) !== null) {
+    entries.push({
+      id: m[1],
+      name: m[2],
+      width: Number(m[3]),
+      height: Number(m[4]),
+      difficulty: m[5],
+      series: m[6],
+      board: m[7],
+      solution: m[8],
+    })
+  }
 }
 
 let errors = 0
