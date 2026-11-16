@@ -1,8 +1,9 @@
 /**
- * 不等式 —— 题库加载
+ * 连续 —— 题库加载
  */
 
 import { RAW_PUZZLES } from './puzzles-data'
+import { IMPORTED_PUZZLES } from './imported-puzzles'
 import {
   asFutoPuzzle,
   decodeBoard,
@@ -11,15 +12,18 @@ import {
   type FutoState,
 } from './types'
 
+/** 内置题库 + 图片导入题库（imported-puzzles.ts，不会被 npm run gen 覆盖） */
+const ALL_RAW = [...RAW_PUZZLES, ...IMPORTED_PUZZLES]
+
 export const builtinPuzzles: FutoPuzzle[] = []
 const solutions = new Map<string, number[]>()
 
-for (const raw of RAW_PUZZLES) {
+for (const raw of ALL_RAW) {
   if (raw.width !== raw.height) continue
   const n = raw.width
   const decoded = decodeBoard(raw.board, n)
   if (!decoded) {
-    console.warn(`[不等式] 题面解码失败：${raw.id}`)
+    console.warn(`[连续] 题面解码失败：${raw.id}`)
     continue
   }
   const puzzle: FutoPuzzle = {

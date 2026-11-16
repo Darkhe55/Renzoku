@@ -72,7 +72,40 @@ src/
     render.ts / state.ts          SVG 渲染与盘面状态
     validate.ts / solver.ts       实时校验与回溯求解
     puzzles.ts / puzzles-data.ts  题库加载与静态题库
+    imported-puzzles.ts           图片导入的题目（npm run gen 不会覆盖）
+scripts/
+  import-image.mjs                图片识图导入题库
 ```
+
+## 从图片导入题库（识图）
+
+`scripts/import-image.mjs` 用 Playwright + Edge 全自动识别连续题面图片（题干数字 + 边中点黑点），
+默认**只预览**，加 `--append` 才写入 `src/game/imported-puzzles.ts`（该文件不会被 `npm run gen` 覆盖）。
+
+```bash
+npm run import-image -- board.png                 # 预览识别结果
+npm run import-image -- board.png --verify        # 预览 + 唯一解校验 + 参考解
+npm run import-image -- board.png --append        # 写入题库
+npm run import-image -- board.png --append --verify --name "识图 · 六阶"
+```
+
+识别流程：先按页面底色裁出题板，再用「格子底色比格缝/格线亮」的亮度投影找出一列列/一行行格子
+（自动判定 n×n，支持截图与印刷风格图片）→ 每格中心裁切 + 自适应二值化 + 多字体模板匹配读预填数字
+（自动排除给定格的浅色圆环）→ 每条内部边中点做小窗口采样，按深色占比区分「黑点 / 格线」。
+
+常用参数：
+
+| 参数 | 说明 |
+|------|------|
+| `--size N` | 手动指定 n（自动判定失败时） |
+| `--map "x,y=数字,..."` | 人工修正某格数字，坐标 0 基（列,行），`0` = 清空 |
+| `--edge "x,y=h;..."` / `--no-edge` | 人工修正某条边的黑点：`h` = 左右相邻，`v` = 上下相邻 |
+| `--ink-drop N` | 数字墨迹相对格子底色的亮度差阈值（默认 95） |
+| `--crop "x,y,w,h"` | 只识别图片中的这块区域（截图带页面边框时用） |
+| `--json out.json` | 导出识别结果（board / solution / 是否唯一） |
+| `--verify` | 调项目 solver 检查唯一解并求参考解（超时只告警） |
+| `--append` | 写入 `src/game/imported-puzzles.ts`（配合 `--dry` 可只演练不写） |
+| `--dry` | 不写入 |
 
 ## 命令
 
@@ -84,4 +117,5 @@ npm run gen       # 重新生成题库
 npm run check     # 审计题库
 npm run verify    # 参考解、逻辑回放与交互验证
 npm run audit     # 逐题审计逻辑解题
+npm run import-image -- <图片> [--append] [--verify]  # 图片导入题库
 ```
