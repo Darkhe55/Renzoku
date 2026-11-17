@@ -39,6 +39,8 @@ const meta = {
   customMaxW: 16,
   customMaxH: 16,
   targetKind: 'cell' as const,
+  interactionHint:
+    '<kbd>左键</kbd> 选中格 · <kbd>数字按钮</kbd>/<kbd>1–9</kbd> 填数 · <kbd>N</kbd> 笔记 · <kbd>0</kbd>/<kbd>退格</kbd> 清除 · 题面预填不可改',
 }
 
 /** 1..16 的点击循环（10..16 显示为 A..G，与题图一致） */
